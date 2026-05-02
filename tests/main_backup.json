@@ -1,0 +1,1997 @@
+{
+  "nodes": [
+    {
+      "parameters": {
+        "content": "### Phase 1: Company Discovery\nFind and filter companies based on ICP.",
+        "height": 280,
+        "width": 1180
+      },
+      "id": "52c475d5-378f-4a0f-b186-301091486367",
+      "name": "Sticky Phase 1",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -36016,
+        48336
+      ]
+    },
+    {
+      "parameters": {
+        "content": "### Phase 2: Contact Selection\nFind top decision makers in qualified companies.",
+        "height": 280,
+        "width": 1164
+      },
+      "id": "dcff6745-c20d-4dba-aa65-35da269c651b",
+      "name": "Sticky Phase 2",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -34800,
+        48336
+      ]
+    },
+    {
+      "parameters": {
+        "content": "### Phase 3: Enrichment & CRM\nGet direct data and sync to HubSpot Sequences.",
+        "height": 280,
+        "width": 1400
+      },
+      "id": "409024d1-28ec-4533-86aa-65c054b0dfbc",
+      "name": "Sticky Phase 3",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -33584,
+        48336
+      ]
+    },
+    {
+      "parameters": {
+        "content": "### Global Monitoring\nAlerts for success or failure via Telegram.",
+        "height": 424,
+        "width": 824
+      },
+      "id": "5942b1be-46c9-454e-91a9-f4cb4f3b8f7f",
+      "name": "Sticky Phase 4",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -36272,
+        48688
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.lusha.com/prospecting/company/search",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  filters: {\n    companies: {\n      include: {\n        locations: [{ country: String($('Configuration').first().json['Locations (Countries)'] || ''), city: String($('Configuration').first().json['City'] || '') }].filter(l => l.country || l.city),\n        mainIndustriesIds: String($('Configuration').first().json['Industries'] || '').split(',').map(i => i.trim()).filter(i => i).map(i => ({'Hospitality': 1, 'Construction': 3, 'Finance': 9, 'Manufacturing': 12, 'Business Services': 14, 'Real Estate': 15, 'Retail': 16}[i] || i)).map(Number).filter(i => !isNaN(i))\n      }\n    }\n  },\n  pages: {\n    size: $('Configuration').first().json['Company Limit'] || 10,\n    page: 0\n  }\n}) }}",
+        "options": {}
+      },
+      "id": "58f202cd-224c-4e53-b18c-82b68e9e5211",
+      "name": "Lusha: Search Companies",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        -35776,
+        48448
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "1OjgMHFemLgBLTDj",
+          "name": "Header Auth account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const vars = $('Configuration').first().json || {};\nconst rawData = $input.first().json;\nconst companies = rawData.data || []; \nconst prompt = `Evaluate these companies based on criteria: ${vars.company_filter_prompt}\\n\\nCompanies:\\n${companies.map(c => `ID: ${c.companyId || c.id} | Name: ${c.name}`).join('\\n')}\\n\\nReturn JSON array of {id, is_relevant, reasoning}`;\n\nconst payload = {\n  contents: [\n    {\n      parts: [\n        {\n          text: prompt\n        }\n      ]\n    }\n  ],\n  generationConfig: { \"response_mime_type\": \"application/json\", \"temperature\": vars.ai_temperature || 0.1 }\n};\nreturn { json: { ...rawData, gemini_payload: payload, original_prompt: prompt, retry_count: 0 } };"
+      },
+      "id": "ba117a00-1db0-4aa6-85b7-76c4ccea5887",
+      "name": "AI Prep: Company Filter",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -35568,
+        48448
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'https://generativelanguage.googleapis.com/v1beta/models/' + ($('Configuration').first().json.gemini_model || 'gemini-2.5-flash') + ':generateContent' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.gemini_payload }}",
+        "options": {}
+      },
+      "id": "ec1f87a5-41e1-4ff8-932c-11046f34d79d",
+      "name": "Gemini: Filter Companies",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        -35376,
+        48448
+      ],
+      "credentials": {
+        "httpQueryAuth": {
+          "id": "lkdTD9pBR4wPgDNW",
+          "name": "Gemini API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst response = input.candidates?.[0]?.content?.parts?.[0]?.text;\n\ntry {\n  if (!response) throw new Error(\"Empty response from AI\");\n  const results = JSON.parse(response);\n  const rawCompanies = $('Lusha: Search Companies').first().json.data || [];\n  const relevantCompanies = rawCompanies.filter(c => results.find(r => String(r.id) === String(c.companyId || c.id) && r.is_relevant));\n  return { json: { success: true, relevant_companies: relevantCompanies, results: results, retry_count: input.retry_count } };\n} catch (e) {\n  return { json: { success: false, error: e.message, raw_response: response, original_prompt: input.original_prompt, retry_count: input.retry_count } };\n}"
+      },
+      "id": "c2d54984-d9a3-4d91-8fcb-d0871d699b4d",
+      "name": "Logic: Parse Companies",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -35168,
+        48448
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Configuration').first().json[\"spreadsheet_id\"] }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Companies",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1S4c_u89MmNbY5adar_QhBBds1Bb-8o6yrzIvswjCEj0/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "results",
+              "displayName": "results",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "relevant_companies",
+              "displayName": "relevant_companies",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "success",
+              "displayName": "success",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "afacb870-5bdf-4262-9a71-36e10b291a1f",
+      "name": "GS: Log Companies",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        -34976,
+        48448
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "Nw36dsCYBtTPcLwC",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "relevant_companies",
+        "options": {}
+      },
+      "id": "f7ef56c2-b3a2-4232-bf6d-0518d8ce32bd",
+      "name": "Extract Companies",
+      "type": "n8n-nodes-base.itemLists",
+      "typeVersion": 3,
+      "position": [
+        -34768,
+        48448
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.lusha.com/prospecting/contact/search",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  filters: {\n    contacts: { include: { jobTitles: ($('Configuration').first().json.job_titles || 'Director, Manager, Owner').split(',').map(t => t.trim()) } },\n    companies: { include: { domains: [$json.domain || $json.fqdn || ''].filter(d => d).map(d => d.replace(/^https?:\\/\\/|\\/$/g, '').replace(/^www\\./, '')) } }\n  },\n  pages: { size: Math.max(10, $('Configuration').first().json['People Per Company Limit'] || 10), page: 0 }\n}) }}",
+        "options": {}
+      },
+      "retryOnFail": true,
+      "maxRetries": 3,
+      "waitBetweenRetries": 5000,
+      "id": "fbd736c7-a64e-4568-bb41-de806c9b2d15",
+      "name": "Lusha: Get People",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        -34576,
+        48448
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "1OjgMHFemLgBLTDj",
+          "name": "Header Auth account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const vars = $('Configuration').first().json;\n\nreturn $input.all().map(item => {\n  const contacts = item.json.data || [];\n  const companyName = contacts[0]?.companyName || \"Unknown Company\";\n  \n  const prompt = `Select top ${vars.target_contact_count} contacts for ${companyName} based on: ${vars.contact_filter_prompt}\\n\\nContacts:\\n${contacts.map(c => `${c.contactId}: ${c.name} (${c.jobTitle})`).join('\\n')}`;\n\n  const payload = {\n    contents: [{ parts: [{ text: prompt }] }],\n    generationConfig: { \"response_mime_type\": \"application/json\", \"temperature\": vars.ai_temperature || 0.1 }\n  };\n\n  return { \n    json: { \n      ...item.json, \n      gemini_payload: payload, \n      original_prompt: prompt, \n      retry_count: 0 \n    } \n  };\n});"
+      },
+      "id": "c31d0feb-c7bc-45a0-bc7b-cfb19bb46890",
+      "name": "AI Prep: Contact Filter",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -34352,
+        48448
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://api.lusha.com/v2/person?personId={{ $json.personId }}&revealEmails=true&revealPhones=false",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "retryOnFail": true,
+      "maxRetries": 3,
+      "waitBetweenRetries": 5000,
+      "id": "2a8ab7bb-7d34-41ff-946c-fa8c5b188aaf",
+      "name": "Lusha: Enrichment",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        -33552,
+        48448
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "1OjgMHFemLgBLTDj",
+          "name": "Header Auth account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Configuration').first().json[\"spreadsheet_id\"] }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 1023883865,
+          "mode": "list",
+          "cachedResultName": "Contacts Enrichment",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1S4c_u89MmNbY5adar_QhBBds1Bb-8o6yrzIvswjCEj0/edit#gid=1023883865"
+        },
+        "columns": {
+          "mappingMode": "mapEachColumnManually",
+          "value": {
+            "values": [
+              {
+                "column": "firstName",
+                "value": "={{ $json.contact.data?.firstName }}"
+              },
+              {
+                "column": "lastName",
+                "value": "={{ $json.contact.data?.lastName }}"
+              },
+              {
+                "column": "jobTitle",
+                "value": "={{ $json.contact.data?.jobTitle?.title || $json.contact.data?.jobTitle }}"
+              },
+              {
+                "column": "email",
+                "value": "={{ $json.contact.data?.emailAddresses?.[0]?.email }}"
+              },
+              {
+                "column": "phone",
+                "value": "={{ $json.contact.data?.phoneNumbers?.[0]?.internationalNumber }}"
+              },
+              {
+                "column": "linkedin",
+                "value": "={{ $json.contact.data?.socialLinks?.linkedin }}"
+              },
+              {
+                "column": "company",
+                "value": "={{ $json.contact.data?.company?.name || $json.contact.data?.companyName }}"
+              },
+              {
+                "column": "enrichmentSource",
+                "value": "Lusha"
+              }
+            ]
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "firstName",
+              "displayName": "firstName",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "lastName",
+              "displayName": "lastName",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "jobTitle",
+              "displayName": "jobTitle",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "email",
+              "displayName": "email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "phone",
+              "displayName": "phone",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "linkedin",
+              "displayName": "linkedin",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "company",
+              "displayName": "company",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "enrichmentSource",
+              "displayName": "enrichmentSource",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "contact",
+              "displayName": "contact",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "3f026fc9-4924-45a7-8b47-f4a53eaf41cc",
+      "name": "GS: Log Enriched",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        -33296,
+        48448
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "u9rLLOYx8KzTL2yy",
+          "name": "Google Service Account account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'https://api.hubapi.com/automation/v4/sequences/enrollments?userId=' + $('Configuration').first().json[\"hubspot_user_id\"] }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + ($('Configuration').first().json[\"HUBSPOT_PAT\"] || 'ERROR') }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  contactId: $json.id,\n  sequenceId: $('Configuration').first().json.hubspot_sequence_id,\n  senderEmail: $('Configuration').first().json.sender_email\n}) }}",
+        "options": {}
+      },
+      "id": "f308d79e-ee94-4178-bc58-559f243b1bcf",
+      "name": "HubSpot: Enroll Sequence",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        -32800,
+        48448
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst successes = items.filter(i => !i.json.error);\nconst failures = items.filter(i => i.json.error);\n\nlet text = (failures.length === 0) ? \"✅ *Pipeline Successful*\" : \"⚠️ *Pipeline Finished with Errors*\";\ntext += `\\n\\n📊 Leads Processed: ${items.length}`;\ntext += `\\n✅ Successes: ${successes.length}`;\n\nif (failures.length > 0) {\n  text += `\\n❌ Failures: ${failures.length}`;\n  text += \"\\n\\n*Recent Errors:*\\n\";\n  failures.slice(0, 5).forEach(f => {\n    const errMsg = f.json.error?.message || \"Unknown error\";\n    text += `- ${errMsg.substring(0, 100)}\\n`;\n  });\n}\n\ntext += `\\n⏱ ${new Date().toLocaleString()}`;\n\nreturn [{\n  json: {\n    chat_id: $('Configuration').first().json.telegram_chat_id,\n    text: text,\n    parse_mode: \"Markdown\"\n  }\n}];"
+      },
+      "id": "b0d43d66-afd3-4b68-8cfc-5333084c1d89",
+      "name": "Success Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -32560,
+        48448
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Configuration').first().json[\"telegram_chat_id\"] }}",
+        "text": "={{$json.text}}",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "8d2706e8-ca44-47d4-9f5f-21e430d535a4",
+      "name": "Telegram: Report",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [
+        -32304,
+        48448
+      ],
+      "webhookId": "87d08549-239e-4c9e-922e-ffcc33a267c9",
+      "credentials": {
+        "telegramApi": {
+          "id": "fnDdTIYKORHUozK2",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Configuration').first().json[\"spreadsheet_id\"] }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 384057786,
+          "mode": "list",
+          "cachedResultName": "Raw Companies",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1S4c_u89MmNbY5adar_QhBBds1Bb-8o6yrzIvswjCEj0/edit#gid=384057786"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "requestId",
+              "displayName": "requestId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "currentPage",
+              "displayName": "currentPage",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "pageLength",
+              "displayName": "pageLength",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "totalResults",
+              "displayName": "totalResults",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "data",
+              "displayName": "data",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "billing",
+              "displayName": "billing",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "4a7d71c9-15ae-42a0-bf46-c3b869a56859",
+      "name": "GS: Log Raw Companies",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        -35616,
+        48192
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "ai9pnYjFQZh8vz9I",
+          "name": "Google Sheets account 3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Configuration').first().json[\"spreadsheet_id\"] }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 1638444027,
+          "mode": "list",
+          "cachedResultName": "Raw Contacts",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1S4c_u89MmNbY5adar_QhBBds1Bb-8o6yrzIvswjCEj0/edit#gid=1638444027"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "requestId",
+              "displayName": "requestId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "currentPage",
+              "displayName": "currentPage",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "pageLength",
+              "displayName": "pageLength",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "totalResults",
+              "displayName": "totalResults",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "data",
+              "displayName": "data",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "billing",
+              "displayName": "billing",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "257e0728-5bef-4e25-b0e5-286a563e3d98",
+      "name": "GS: Log Raw Contacts",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        -34432,
+        48656
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "MJoMOAjcI8Nlyuww",
+          "name": "Google Service Account account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.success }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "14d673cc-8210-4642-9ca5-48af485223b7",
+      "name": "If: Company Success",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        -35072,
+        48688
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nif (input.retry_count >= 1) {\n  throw new Error(`AI Filter failed after retry. Error: ${input.error}`);\n}\nconst newPrompt = `The previous response was invalid or caused an error: ${input.error}\\n\\nRaw response received: ${input.raw_response}\\n\\nPlease fix the response and ensure it follows the required JSON format.\\n\\nOriginal Request:\\n${input.original_prompt}`;\nconst payload = {\n  contents: [{ parts: [{ text: newPrompt }] }],\n  generationConfig: { \"response_mime_type\": \"application/json\", \"temperature\": $('Configuration').first().json.ai_temperature || 0.1 }\n};\nreturn { json: { ...input, gemini_payload: payload, retry_count: input.retry_count + 1 } };"
+      },
+      "id": "b446d58e-2741-4bb9-be24-9b0ebe677938",
+      "name": "AI Prep: Company Retry",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -34848,
+        48800
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "78c5326b-4404-4aee-a5bc-40dd5b6e7df6",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        -36192,
+        48768
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst error = input._originalInput; \nreturn [{\n  json: {\n    chat_id: $('Configuration').first().json.telegram_chat_id,\n    text: `❌ *Pipeline Failure*\\n\\n⚠️ Error: ${error.execution.error.message}\\n📍 Node: ${error.execution.lastNodeName}`,\n    parse_mode: \"MarkdownV2\"\n  }\n}];"
+      },
+      "id": "cdd6846c-e709-406d-85f4-533b2fbcdd62",
+      "name": "Error Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -35920,
+        48768
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $node[\"Configuration\"].json[\"telegram_chat_id\"] }}",
+        "text": "={{$json.text}}",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "66bbfd0b-4c33-4293-a9b7-5a518209ca09",
+      "name": "Telegram: Alert",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [
+        -35632,
+        48768
+      ],
+      "webhookId": "e56365f9-b3f0-49ff-8318-cdab28c3416e",
+      "credentials": {
+        "telegramApi": {
+          "id": "fnDdTIYKORHUozK2",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'https://generativelanguage.googleapis.com/v1beta/models/' + ($('Configuration').first().json.gemini_model || 'gemini-2.5-flash') + ':generateContent' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.gemini_payload }}",
+        "options": {}
+      },
+      "id": "c1e5fbaa-967e-4f67-bd9c-8be83013e751",
+      "name": "Gemini: Filter Contacts",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        -34160,
+        48512
+      ],
+      "credentials": {
+        "httpQueryAuth": {
+          "id": "lkdTD9pBR4wPgDNW",
+          "name": "Gemini API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const lushaItems = $('Lusha: Get People').all();\n\nreturn $input.all().flatMap((item, index) => {\n  const input = item.json;\n  const response = input.candidates?.[0]?.content?.parts?.[0]?.text;\n\n  try {\n    if (!response) throw new Error(\"Empty response from AI\");\n    const result = JSON.parse(response);\n    \n    let contactsToProcess = [];\n    if (Array.isArray(result)) {\n      contactsToProcess = result;\n    } else {\n      contactsToProcess = result.selected_contacts || result.contacts || result.data || [];\n    }\n\n    if (contactsToProcess.length === 0) {\n      throw new Error(\"AI returned zero contacts or invalid format\");\n    }\n\n    const originalData = lushaItems[index]?.json?.data || [];\n    \n    const selected = contactsToProcess.map(s => {\n      const contactId = s.id || s.contactId;\n      const full = originalData.find(o => String(o.contactId) === String(contactId));\n      return full ? { ...s, ...full } : null;\n    }).filter(c => c !== null);\n\n    if (selected.length === 0) {\n      throw new Error(\"Could not match AI response with any original contacts\");\n    }\n\n    return selected.map(s => ({ \n      json: { ...s, success: true, retry_count: input.retry_count } \n    }));\n\n  } catch (e) {\n    return [{ \n      json: { \n        success: false, \n        error: e.message, \n        raw_response: response, \n        original_prompt: input.original_prompt, \n        retry_count: input.retry_count \n      } \n    }];\n  }\n});"
+      },
+      "id": "e5e2b8d9-d9cf-44c4-b8c4-1235332f03d5",
+      "name": "Logic: Parse Contacts",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -33952,
+        48512
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $node[\"Configuration\"].json[\"spreadsheet_id\"] }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 1698603057,
+          "mode": "list",
+          "cachedResultName": "Contacts",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1S4c_u89MmNbY5adar_QhBBds1Bb-8o6yrzIvswjCEj0/edit#gid=1698603057"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [
+            "id"
+          ],
+          "schema": [
+            {
+              "id": "firstName",
+              "displayName": "firstName",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "lastName",
+              "displayName": "lastName",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "jobTitle",
+              "displayName": "jobTitle",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "email",
+              "displayName": "email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "company",
+              "displayName": "company",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "id",
+              "displayName": "id",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "name",
+              "displayName": "name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "title",
+              "displayName": "title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "contactId",
+              "displayName": "contactId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "companyId",
+              "displayName": "companyId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "companyName",
+              "displayName": "companyName",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "fqdn",
+              "displayName": "fqdn",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "companyDescription",
+              "displayName": "companyDescription",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "logoUrl",
+              "displayName": "logoUrl",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "isShown",
+              "displayName": "isShown",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "hasCompanyEmployeesCount",
+              "displayName": "hasCompanyEmployeesCount",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "hasCompanyRevenue",
+              "displayName": "hasCompanyRevenue",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "hasCompanyMainIndustry",
+              "displayName": "hasCompanyMainIndustry",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "hasCompanySubIndustry",
+              "displayName": "hasCompanySubIndustry",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "hasCompanyFunding",
+              "displayName": "hasCompanyFunding",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "hasCompanyIntent",
+              "displayName": "hasCompanyIntent",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "hasCompanyTechnologies",
+              "displayName": "hasCompanyTechnologies",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "hasDepartment",
+              "displayName": "hasDepartment",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "hasSeniority",
+              "displayName": "hasSeniority",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "hasContactLocation",
+              "displayName": "hasContactLocation",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "hasSocialLink",
+              "displayName": "hasSocialLink",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "hasEmails",
+              "displayName": "hasEmails",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "hasWorkEmail",
+              "displayName": "hasWorkEmail",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "hasPrivateEmail",
+              "displayName": "hasPrivateEmail",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "hasPhones",
+              "displayName": "hasPhones",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "hasMobilePhone",
+              "displayName": "hasMobilePhone",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "hasDirectPhone",
+              "displayName": "hasDirectPhone",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "hasCompanyCity",
+              "displayName": "hasCompanyCity",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "hasCompanyCountry",
+              "displayName": "hasCompanyCountry",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "personId",
+              "displayName": "personId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "success",
+              "displayName": "success",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "7640da17-b922-476e-927a-91f49edff847",
+      "name": "GS: Log Contacts",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        -33760,
+        48512
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "Nw36dsCYBtTPcLwC",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.success }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "bc9573b0-f5b7-45e7-9a3b-1bc79cf83766",
+      "name": "If: Contact Success",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        -33856,
+        48720
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return $input.all().map(item => {\n  const input = item.json;\n\n  if (input.retry_count >= 1) {\n    throw new Error(`AI Filter failed after retry. Error: ${input.error}`);\n  }\n\n  const newPrompt = `The previous response was invalid or caused an error: ${input.error}\\n\\nRaw response received: ${input.raw_response}\\n\\nPlease fix the response and ensure it follows the required JSON format.\\n\\nOriginal Request:\\n${input.original_prompt}`;\n\n  const payload = {\n    contents: [{ parts: [{ text: newPrompt }] }],\n    generationConfig: { \"response_mime_type\": \"application/json\", \"temperature\": $('Configuration').first().json.ai_temperature || 0.1 }\n  };\n\n  return { \n    json: { \n      ...input, \n      gemini_payload: payload, \n      retry_count: input.retry_count + 1 \n    } \n  };\n});"
+      },
+      "id": "912f9376-e859-46e1-9919-db10860addb3",
+      "name": "AI Prep: Contact Retry",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -33616,
+        48736
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/contacts",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + ($('Configuration').first().json[\"HUBSPOT_PAT\"] || 'ERROR') }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{\n  (() => {\n    const enrichedData = $('Lusha: Enrichment').item.json.contact?.data || {};\n    const fallbackData = $json; \n    const props = {};\n    \n    let firstName = enrichedData.firstName || '';\n    let lastName = enrichedData.lastName || '';\n    \n    if (!firstName && fallbackData.name) {\n      const nameParts = fallbackData.name.split(' ');\n      firstName = nameParts[0];\n      lastName = nameParts.slice(1).join(' ');\n    }\n    \n    if (firstName) props.firstname = firstName;\n    if (lastName) props.lastname = lastName;\n    \n    const email = enrichedData.emailAddresses?.[0]?.email;\n    if (email) props.email = email;\n    \n    const job = enrichedData.jobTitle?.title || enrichedData.jobTitle || fallbackData.jobTitle;\n    if (job) props.jobtitle = job;\n    \n    const company = enrichedData.company?.name || enrichedData.companyName || fallbackData.companyName;\n    if (company) props.company = company;\n    \n    return { \"properties\": props };\n  })()\n}}",
+        "options": {}
+      },
+      "id": "2ee36bc7-fb0f-4908-bed5-057ff467ca58",
+      "name": "HubSpot: Create Contact",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        -33056,
+        48448
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "6507de7c-309f-4c06-bf50-c38c5c9daa9e",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Access-Control-Allow-Origin",
+                "value": "*"
+              },
+              {
+                "name": "Access-Control-Allow-Methods",
+                "value": "GET, POST, OPTIONS"
+              },
+              {
+                "name": "Access-Control-Allow-Headers",
+                "value": "Content-Type, Authorization"
+              }
+            ]
+          }
+        }
+      },
+      "id": "61810456-eb0d-49fc-9dee-b671ae37fd0a",
+      "name": "Global Config",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [
+        -38352,
+        49504
+      ],
+      "webhookId": "f0c2a04b-a708-4797-953c-e3eb7d629bea"
+    },
+    {
+      "parameters": {
+        "jsCode": "const fs = require('fs');\n\n// Default values\nconst defaults = {\n  \"Industries\": \"Real Estate\",\n  \"Locations (Countries)\": \"United Kingdom\",\n  \"City\": \"London\",\n  \"Company Limit\": 10,\n  \"People Per Company Limit\": 10,\n  \"company_filter_prompt\": \"Identify companies relevant to residential real estate development and investment. Exclude general consulting if they don't develop properties.\",\n  \"contact_filter_prompt\": \"Identify decision-makers in IT, Operations, or Strategy. Focus on Directors and C-level.\",\n  \"target_contact_count\": 2,\n  \"gemini_model\": \"gemini-2.5-flash\",\n  \"ai_temperature\": 0.1,\n  \"job_titles\": \"Director, Manager, Owner\",\n  \"spreadsheet_id\": \"1S4c_u89MmNbY5adar_QhBBds1Bb-8o6yrzIvswjCEj0\",\n  \"hubspot_user_id\": \"29480403\",\n  \"hubspot_sequence_id\": \"806741197\",\n  \"telegram_chat_id\": \"1322565480\",\n  \"Delay: Lusha Search (s)\": 1,\n  \"Delay: Gemini (s)\": 2,\n  \"Delay: Lusha Enrichment (s)\": 3,\n  \"Delay: HubSpot (s)\": 2,\n  \"sender_email\": \"anastasian@rocketscience.lv\"\n};\n\nconst items = $input.all();\nconst item = items[0] || { json: {} };\n\n// Handle both Form Trigger (direct json) and Webhook (body)\nconst inputData = item.json.body || item.json || {};\nconst json = { ...defaults, ...inputData };\n\n// Mapping form names to logical names if they differ\nif (json['Gemini Model']) json.gemini_model = json['Gemini Model'];\nif (json['AI Temperature']) json.ai_temperature = json['AI Temperature'];\nif (json['Job Titles']) json.job_titles = json['Job Titles'];\n\n// Convert number-like strings to numbers\n['Company Limit', 'People Per Company Limit', 'target_contact_count', 'ai_temperature', 'Delay: Lusha Search (s)', 'Delay: Gemini (s)', 'Delay: Lusha Enrichment (s)', 'Delay: HubSpot (s)'].forEach(key => {\n  if (json[key] !== undefined && typeof json[key] === 'string') {\n    const val = parseFloat(json[key]);\n    if (!isNaN(val)) json[key] = val;\n  }\n});\n\n// Sync secondary logical names if they were converted\nif (json.ai_temperature) json['AI Temperature'] = json.ai_temperature;\n\nconst countryMap = {\n  \"United Kingdom\": \"GB\",\n  \"United States\": \"US\",\n  \"Germany\": \"DE\",\n  \"France\": \"FR\",\n  \"Spain\": \"ES\",\n  \"Italy\": \"IT\",\n  \"Canada\": \"CA\",\n  \"Australia\": \"AU\",\n  \"Netherlands\": \"NL\"\n};\n\nif (json['Locations (Countries)']) {\n  json['CountryCode'] = countryMap[json['Locations (Countries)']] || json['Locations (Countries)'];\n}\n\n// Determine trigger source\nlet triggerType = 'unknown';\nif (item.json.body) triggerType = 'webhook';\nelse if (item.json.path && item.json.formTitle) triggerType = 'form';\nelse if (item.json.execution) triggerType = 'error';\nelse triggerType = 'cron';\n\nlet envContent = '';\nif (item.binary) {\n  const envFileKey = Object.keys(item.binary).find(key => key.toLowerCase().includes('env'));\n  if (envFileKey && item.binary[envFileKey]) {\n    envContent = Buffer.from(item.binary[envFileKey].data, 'base64').toString('utf8');\n  }\n}\n\nif (!envContent) {\n  try {\n    if (fs.existsSync('/files/.env')) {\n      envContent = fs.readFileSync('/files/.env', 'utf8');\n    }\n  } catch (e) {}\n}\n\nif (envContent) {\n  const lines = envContent.split(/\\r?\\n/);\n  for (const line of lines) {\n    const trimmed = line.trim();\n    if (trimmed && !trimmed.startsWith('#')) {\n      const separatorIndex = trimmed.indexOf('=');\n      if (separatorIndex > 0) {\n        const key = trimmed.substring(0, separatorIndex).trim();\n        const value = trimmed.substring(separatorIndex + 1).trim().replace(/^[\\\"\\']|[\\\"\\']$/g, '');\n        json[key] = value;\n      }\n    }\n  }\n}\n\n// FIXED: Prioritize explicitly set form value first, but allow .env to override defaults\nif (json['HubSpot Sender Email']) {\n  json['sender_email'] = json['HubSpot Sender Email'];\n}\nif (json['HUBSPOT_EMAIL']) {\n  json['sender_email'] = json['HUBSPOT_EMAIL'];\n}\n\n// Keep original input for error reporting if applicable\nreturn [{ json: { ...json, _triggerType: triggerType, _originalInput: item.json } }];"
+      },
+      "id": "163c800e-4775-461d-8a75-d62c4aef9761",
+      "name": "Configuration",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -37872,
+        49408
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 15
+            }
+          ]
+        }
+      },
+      "id": "4eb5e881-ecce-4441-acaa-82bb4c618ef6",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -38352,
+        49328
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $node[\"Configuration\"].json[\"telegram_chat_id\"] }}",
+        "text": "=🚀 *Pipeline started by cron*\\n⏱ {{ new Date().toLocaleString() }}",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "cd0b92d9-166e-492a-a74f-16da8e9771f7",
+      "name": "Cron Started Notification",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [
+        -37600,
+        49712
+      ],
+      "webhookId": "353b6d2b-076e-4122-b307-190f30376dfd",
+      "credentials": {
+        "telegramApi": {
+          "id": "fnDdTIYKORHUozK2",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1,
+                  "type": "string"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json._triggerType }}",
+                    "rightValue": "cron",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter_string_equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "cron"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1,
+                  "type": "string"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json._triggerType }}",
+                    "rightValue": "error",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter_string_equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "error"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1,
+                  "type": "string"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json._triggerType }}",
+                    "rightValue": "form",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter_string_equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "form"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1,
+                  "type": "string"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json._triggerType }}",
+                    "rightValue": "webhook",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter_string_equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "webhook"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "661fff59-6860-4b27-85a5-bcf0ef1f738c",
+      "name": "Trigger Router",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        -37472,
+        49392
+      ]
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "data",
+        "options": {}
+      },
+      "id": "56beec35-640d-4456-85d0-50cd5b58f172",
+      "name": "Split Out Data",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        -33984,
+        45968
+      ]
+    },
+    {
+      "parameters": {
+        "amount": "={{ $('Configuration').first().json['Delay: Lusha Search (s)'] || 1 }}",
+        "unit": "seconds"
+      },
+      "id": "41f32e3d-287d-4110-9ccf-3b4c533960a0",
+      "name": "Wait: Lusha Search",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1,
+      "position": [
+        -34672,
+        48448
+      ],
+      "webhookId": "792a63ae-c9d9-4024-aac6-ee3258878e85"
+    },
+    {
+      "parameters": {
+        "amount": "={{ $('Configuration').first().json['Delay: Gemini (s)'] || 2 }}",
+        "unit": "seconds"
+      },
+      "id": "d8cfdee9-49c2-4314-b8bf-3dcc30d53953",
+      "name": "Wait: Gemini",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1,
+      "position": [
+        -34256,
+        48480
+      ],
+      "webhookId": "897fb978-cf67-4e0f-9630-27a91c554144"
+    },
+    {
+      "parameters": {
+        "amount": "={{ $('Configuration').first().json['Delay: Lusha Enrichment (s)'] || 3 }}",
+        "unit": "seconds"
+      },
+      "id": "dc77e6c1-87c7-4fbe-9b0b-793c856ed672",
+      "name": "Wait: Lusha Enrichment",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1,
+      "position": [
+        -33664,
+        48480
+      ],
+      "webhookId": "23904e5b-4b27-49c1-aed6-cf4620bd14e0"
+    },
+    {
+      "parameters": {
+        "amount": "={{ $('Configuration').first().json['Delay: HubSpot (s)'] || 2 }}",
+        "unit": "seconds"
+      },
+      "id": "efc4c739-88c8-4e77-a232-758c0a4eed54",
+      "name": "Wait: HubSpot",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1,
+      "position": [
+        -32928,
+        48448
+      ],
+      "webhookId": "a0d6e1d2-58db-4237-ab5b-318f7b65feea"
+    }
+  ],
+  "connections": {
+    "Lusha: Search Companies": {
+      "main": [
+        [
+          {
+            "node": "GS: Log Raw Companies",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "AI Prep: Company Filter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Prep: Company Filter": {
+      "main": [
+        [
+          {
+            "node": "Gemini: Filter Companies",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini: Filter Companies": {
+      "main": [
+        [
+          {
+            "node": "Logic: Parse Companies",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Logic: Parse Companies": {
+      "main": [
+        [
+          {
+            "node": "If: Company Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GS: Log Companies": {
+      "main": [
+        [
+          {
+            "node": "Extract Companies",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Companies": {
+      "main": [
+        [
+          {
+            "node": "Wait: Lusha Search",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lusha: Get People": {
+      "main": [
+        [
+          {
+            "node": "GS: Log Raw Contacts",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "AI Prep: Contact Filter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Prep: Contact Filter": {
+      "main": [
+        [
+          {
+            "node": "Wait: Gemini",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lusha: Enrichment": {
+      "main": [
+        [
+          {
+            "node": "GS: Log Enriched",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GS: Log Enriched": {
+      "main": [
+        [
+          {
+            "node": "HubSpot: Create Contact",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HubSpot: Enroll Sequence": {
+      "main": [
+        [
+          {
+            "node": "Success Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Success Report": {
+      "main": [
+        [
+          {
+            "node": "Telegram: Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If: Company Success": {
+      "main": [
+        [
+          {
+            "node": "GS: Log Companies",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "AI Prep: Company Retry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Prep: Company Retry": {
+      "main": [
+        [
+          {
+            "node": "Gemini: Filter Companies",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Configuration",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Error Report": {
+      "main": [
+        [
+          {
+            "node": "Telegram: Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini: Filter Contacts": {
+      "main": [
+        [
+          {
+            "node": "Logic: Parse Contacts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Logic: Parse Contacts": {
+      "main": [
+        [
+          {
+            "node": "If: Contact Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GS: Log Contacts": {
+      "main": [
+        [
+          {
+            "node": "Wait: Lusha Enrichment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If: Contact Success": {
+      "main": [
+        [
+          {
+            "node": "GS: Log Contacts",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "AI Prep: Contact Retry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Prep: Contact Retry": {
+      "main": [
+        [
+          {
+            "node": "Wait: Gemini",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HubSpot: Create Contact": {
+      "main": [
+        [
+          {
+            "node": "Wait: HubSpot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Global Config": {
+      "main": [
+        [
+          {
+            "node": "Configuration",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Configuration": {
+      "main": [
+        [
+          {
+            "node": "Trigger Router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Configuration",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cron Started Notification": {
+      "main": [
+        [
+          {
+            "node": "Lusha: Search Companies",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trigger Router": {
+      "main": [
+        [
+          {
+            "node": "Cron Started Notification",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error Report",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Lusha: Search Companies",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Lusha: Search Companies",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Out Data": {
+      "main": [
+        [
+          {
+            "node": "GS: Log Raw Companies",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait: Lusha Search": {
+      "main": [
+        [
+          {
+            "node": "Lusha: Get People",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait: Gemini": {
+      "main": [
+        [
+          {
+            "node": "Gemini: Filter Contacts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait: Lusha Enrichment": {
+      "main": [
+        [
+          {
+            "node": "Lusha: Enrichment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait: HubSpot": {
+      "main": [
+        [
+          {
+            "node": "HubSpot: Enroll Sequence",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "5e2ef305293234a1195cbf9a96cfd9c24a7e107152a2bb24c00f3ed0c6cdad96"
+  }
+}

@@ -86,9 +86,10 @@ def split_workflow(input_file, output_dir):
     except Exception as e:
         log.error(f"Failed to split workflow: {e}")
 
-def assemble_workflow_dict(input_dir):
+def assemble_workflow_dict(input_dir, test_config=None):
     """Reconstructs the workflow dictionary from the directory structure."""
     input_path = Path(input_dir)
+    test_config = test_config or {}
     
     # 1. Load Metadata
     with open(input_path / "workflow_meta.json", "r", encoding="utf-8") as f:
@@ -109,28 +110,72 @@ def assemble_workflow_dict(input_dir):
         with open(node_dir / "node.json", "r", encoding="utf-8") as f:
             node = json.load(f)
         
-        # Inject JS Code
-        js_file = node_dir / "code.js"
-        if js_file.exists():
-            with open(js_file, "r", encoding="utf-8") as f:
-                node["parameters"]["jsCode"] = f.read()
+        node_name = node.get("name")
+        
+        # Apply test configuration
+        if node_name in test_config:
+            mode = test_config[node_name]
+            if mode == "disabled":
+                node["disabled"] = True
+                log.info(f"Node [bold yellow]{node_name}[/bold yellow] is [bold red]disabled[/bold red] via test config.")
+            elif mode == "mock":
+                test_file = node_dir / "test.json"
+                if test_file.exists():
+                    with open(test_file, "r", encoding="utf-8") as tf:
+                        test_data = json.load(tf)
+                    
+                    # Ensure data is in n8n format: [{ "json": { ... } }]
+                    if isinstance(test_data, list):
+                        # Check if it's already wrapped
+                        is_wrapped = all(isinstance(item, dict) and "json" in item for item in test_data)
+                        if not is_wrapped:
+                            test_data = [{"json": item} for item in test_data]
+                    else:
+                        test_data = [{"json": test_data}]
+                    
+                    # Replace node with a Code node
+                    node["type"] = "n8n-nodes-base.code"
+                    node["typeVersion"] = 2
+                    node["parameters"] = {
+                        "jsCode": f"return {json.dumps(test_data, indent=2, ensure_ascii=False)};"
+                    }
+                    # Clear credentials if any, as this is now a mock code node
+                    if "credentials" in node:
+                        del node["credentials"]
+                        
+                    log.info(f"Node [bold yellow]{node_name}[/bold yellow] is [bold blue]mocked[/bold blue] via test config.")
+                else:
+                    log.warning(f"Mock requested for [bold yellow]{node_name}[/bold yellow], but [bold cyan]{test_file}[/bold cyan] not found.")
 
-        # Inject Python Code
-        py_file = node_dir / "code.py"
-        if py_file.exists():
-            with open(py_file, "r", encoding="utf-8") as f:
-                node["parameters"]["pythonCode"] = f.read()
+        # Inject JS Code (only if not mocked)
+        if node.get("type") != "n8n-nodes-base.code" or node_name not in test_config:
+            js_file = node_dir / "code.js"
+            if js_file.exists():
+                with open(js_file, "r", encoding="utf-8") as f:
+                    node["parameters"]["jsCode"] = f.read()
+
+            # Inject Python Code
+            py_file = node_dir / "code.py"
+            if py_file.exists():
+                with open(py_file, "r", encoding="utf-8") as f:
+                    node["parameters"]["pythonCode"] = f.read()
         
         nodes.append(node)
 
     workflow["nodes"] = nodes
     return workflow
 
-def build_workflow(input_dir, output_file):
+def build_workflow(input_dir, output_file, test_config_path=None):
     """Assembles an n8n workflow JSON from a directory structure."""
     log.info(f"Building workflow from [bold cyan]{input_dir}[/bold cyan] into [bold cyan]{output_file}[/bold cyan]...")
     try:
-        workflow = assemble_workflow_dict(input_dir)
+        test_config = None
+        if test_config_path:
+            log.info(f"Using test configuration from [bold cyan]{test_config_path}[/bold cyan]")
+            with open(test_config_path, "r", encoding="utf-8") as f:
+                test_config = json.load(f)
+
+        workflow = assemble_workflow_dict(input_dir, test_config)
         with open(output_file, "w", encoding="utf-8") as f:
             json.dump(workflow, f, indent=2, ensure_ascii=False)
         log.info(f"[bold green]Successfully built workflow into {output_file}[/bold green]")
@@ -341,6 +386,7 @@ def main():
     build_parser = subparsers.add_parser("build", help="Build JSON from directory structure")
     build_parser.add_argument("--input", "-i", required=True, help="Input directory")
     build_parser.add_argument("--output", "-o", required=True, help="Output workflow JSON file")
+    build_parser.add_argument("--test", "-t", help="Test configuration JSON file")
 
     # Docs command
     subparsers.add_parser("docs", help="Parse n8n documentation from npm and GitHub")
@@ -353,7 +399,7 @@ def main():
     if args.command == "split":
         split_workflow(args.input, args.output)
     elif args.command == "build":
-        build_workflow(args.input, args.output)
+        build_workflow(args.input, args.output, args.test)
     elif args.command == "docs":
         parse_docs()
     elif args.command == "install":

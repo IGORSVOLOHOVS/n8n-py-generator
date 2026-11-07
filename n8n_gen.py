@@ -1,22 +1,24 @@
 #!/usr/bin/env python3
-import json
-import os
 import argparse
-import shutil
-import time
+import json
 import logging
-import requests
-import pandas as pd
+import os
+import shutil
+import stat
 import subprocess
 import sys
-import stat
+import time
 from pathlib import Path
+
+import pandas as pd
+import requests
 from rich.console import Console
-from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
 from rich.logging import RichHandler
+from rich.progress import BarColumn, Progress, SpinnerColumn, TaskProgressColumn, TextColumn
 
 try:
     from dotenv import load_dotenv
+
     load_dotenv()
 except ImportError:
     pass
@@ -27,15 +29,16 @@ logging.basicConfig(
     level="INFO",
     format="%(message)s",
     datefmt="[%X]",
-    handlers=[RichHandler(rich_tracebacks=True, console=console, markup=True)]
+    handlers=[RichHandler(rich_tracebacks=True, console=console, markup=True)],
 )
 log = logging.getLogger("rich")
+
 
 def split_workflow(input_file, output_dir):
     """Splits an n8n workflow JSON into a directory structure."""
     log.info(f"Splitting workflow [bold cyan]{input_file}[/bold cyan] into [bold cyan]{output_dir}[/bold cyan]...")
     try:
-        with open(input_file, 'r', encoding='utf-8') as f:
+        with open(input_file, "r", encoding="utf-8") as f:
             workflow = json.load(f)
 
         output_path = Path(output_dir)
@@ -55,13 +58,13 @@ def split_workflow(input_file, output_dir):
 
             # Extract code if present
             params = node.get("parameters", {})
-            
+
             # JS Code
             if "jsCode" in params:
                 code = params.pop("jsCode")
                 with open(node_dir / "code.js", "w", encoding="utf-8") as f:
                     f.write(code)
-            
+
             # Python Code
             if "pythonCode" in params:
                 code = params.pop("pythonCode")
@@ -86,11 +89,12 @@ def split_workflow(input_file, output_dir):
     except Exception as e:
         log.error(f"Failed to split workflow: {e}")
 
+
 def assemble_workflow_dict(input_dir, test_config=None):
     """Reconstructs the workflow dictionary from the directory structure."""
     input_path = Path(input_dir)
     test_config = test_config or {}
-    
+
     # 1. Load Metadata
     with open(input_path / "workflow_meta.json", "r", encoding="utf-8") as f:
         workflow = json.load(f)
@@ -102,28 +106,30 @@ def assemble_workflow_dict(input_dir, test_config=None):
     # 3. Load Nodes
     nodes = []
     nodes_path = input_path / "nodes"
-    
+
     for node_dir in sorted(nodes_path.iterdir()):
         if not node_dir.is_dir():
             continue
-            
+
         with open(node_dir / "node.json", "r", encoding="utf-8") as f:
             node = json.load(f)
-        
+
         node_name = node.get("name")
-        
+
         # Apply test configuration
         if node_name in test_config:
             mode = test_config[node_name]
             if mode == "disabled":
                 node["disabled"] = True
-                log.info(f"Node [bold yellow]{node_name}[/bold yellow] is [bold red]disabled[/bold red] via test config.")
+                log.info(
+                    f"Node [bold yellow]{node_name}[/bold yellow] is [bold red]disabled[/bold red] via test config."
+                )
             elif mode == "mock":
                 test_file = node_dir / "test.json"
                 if test_file.exists():
                     with open(test_file, "r", encoding="utf-8") as tf:
                         test_data = json.load(tf)
-                    
+
                     # Ensure data is in n8n format: [{ "json": { ... } }]
                     if isinstance(test_data, list):
                         # Check if it's already wrapped
@@ -132,20 +138,22 @@ def assemble_workflow_dict(input_dir, test_config=None):
                             test_data = [{"json": item} for item in test_data]
                     else:
                         test_data = [{"json": test_data}]
-                    
+
                     # Replace node with a Code node
                     node["type"] = "n8n-nodes-base.code"
                     node["typeVersion"] = 2
-                    node["parameters"] = {
-                        "jsCode": f"return {json.dumps(test_data, indent=2, ensure_ascii=False)};"
-                    }
+                    node["parameters"] = {"jsCode": f"return {json.dumps(test_data, indent=2, ensure_ascii=False)};"}
                     # Clear credentials if any, as this is now a mock code node
                     if "credentials" in node:
                         del node["credentials"]
-                        
-                    log.info(f"Node [bold yellow]{node_name}[/bold yellow] is [bold blue]mocked[/bold blue] via test config.")
+
+                    log.info(
+                        f"Node [bold yellow]{node_name}[/bold yellow] is [bold blue]mocked[/bold blue] via test config."
+                    )
                 else:
-                    log.warning(f"Mock requested for [bold yellow]{node_name}[/bold yellow], but [bold cyan]{test_file}[/bold cyan] not found.")
+                    log.warning(
+                        f"Mock requested for [bold yellow]{node_name}[/bold yellow], but [bold cyan]{test_file}[/bold cyan] not found."
+                    )
 
         # Inject JS Code (only if not mocked)
         if node.get("type") != "n8n-nodes-base.code" or node_name not in test_config:
@@ -159,11 +167,12 @@ def assemble_workflow_dict(input_dir, test_config=None):
             if py_file.exists():
                 with open(py_file, "r", encoding="utf-8") as f:
                     node["parameters"]["pythonCode"] = f.read()
-        
+
         nodes.append(node)
 
     workflow["nodes"] = nodes
     return workflow
+
 
 def build_workflow(input_dir, output_file, test_config_path=None):
     """Assembles an n8n workflow JSON from a directory structure."""
@@ -182,12 +191,13 @@ def build_workflow(input_dir, output_file, test_config_path=None):
     except Exception as e:
         log.error(f"Failed to build workflow: {e}")
 
+
 def parse_docs():
     """Parses n8n documentation (logic from n8n_node_scraber.py)."""
     base_path = "docs/n8n_community"
     docs_n8n_path = "docs/n8n"
     docs_md_path = "docs/n8n_docs.md"
-    
+
     os.makedirs(base_path, exist_ok=True)
     os.makedirs(docs_n8n_path, exist_ok=True)
 
@@ -202,51 +212,53 @@ def parse_docs():
             TextColumn("[progress.description]{task.description}"),
             BarColumn(),
             TaskProgressColumn(),
-            console=console
+            console=console,
         ) as progress:
             task_id = progress.add_task("[cyan]Fetching data...", total=None)
-            
+
             while True:
                 url = f"https://registry.npmjs.org/-/v1/search?text=keywords:n8n-community-node-package&size={size}&from={offset}"
                 response = requests.get(url)
-                
+
                 if response.status_code != 200:
                     log.error(f"Failed to fetch data: HTTP {response.status_code}")
                     break
-                    
+
                 try:
                     data = response.json()
                 except Exception:
                     log.error("Failed to parse JSON response. Possible rate limit or API error.")
                     break
-                
-                if not data.get('objects'):
+
+                if not data.get("objects"):
                     break
-                    
-                for item in data['objects']:
-                    pkg = item['package']
-                    all_nodes.append({
-                        'name': pkg.get('name'),
-                        'description': pkg.get('description'),
-                        'version': pkg.get('version'),
-                        'link': pkg.get('links', {}).get('npm')
-                    })
-                
+
+                for item in data["objects"]:
+                    pkg = item["package"]
+                    all_nodes.append(
+                        {
+                            "name": pkg.get("name"),
+                            "description": pkg.get("description"),
+                            "version": pkg.get("version"),
+                            "link": pkg.get("links", {}).get("npm"),
+                        }
+                    )
+
                 if progress.tasks[task_id].total is None:
-                    progress.update(task_id, total=data['total'])
-                
-                progress.update(task_id, advance=len(data['objects']))
-                
+                    progress.update(task_id, total=data["total"])
+
+                progress.update(task_id, advance=len(data["objects"]))
+
                 offset += size
-                if offset > data['total']:
+                if offset > data["total"]:
                     break
-                
+
                 time.sleep(0.5)
 
         if all_nodes:
             log.info(f"Saving [green]{len(all_nodes)}[/green] nodes into CSV chunks...")
             for i in range(0, len(all_nodes), 250):
-                chunk = all_nodes[i:i + 250]
+                chunk = all_nodes[i : i + 250]
                 df = pd.DataFrame(chunk)
                 file_num = (i // 250) + 1
                 file_path = os.path.join(base_path, f"n8n_nodes_{file_num}.csv")
@@ -277,7 +289,7 @@ def parse_docs():
     )
 
     try:
-        with console.status("[bold green]Processing Git operations...") as status:
+        with console.status("[bold green]Processing Git operations..."):
             subprocess.run(git_command, shell=True, check=True, capture_output=True)
         log.info(f"[bold green]Built-in nodes successfully updated in {docs_n8n_path}[/bold green]")
     except subprocess.CalledProcessError as e:
@@ -321,17 +333,18 @@ A database of over 8000+ community nodes from npm, split into CSV chunks of 250 
     except Exception as e:
         log.error(f"Failed to generate n8n_docs.md: {e}")
 
+
 def install_script():
     """Installs the script globally by creating a symlink or shim."""
     log.info("Installing n8n-gen globally...")
-    
+
     script_path = Path(__file__).resolve()
     is_windows = sys.platform == "win32"
-    
+
     if is_windows:
         bin_dir = Path.home() / "AppData" / "Local" / "Microsoft" / "WindowsApps"
         shim_path = bin_dir / "n8n-gen.bat"
-        
+
         try:
             bin_dir.mkdir(parents=True, exist_ok=True)
             with open(shim_path, "w", encoding="utf-8") as f:
@@ -343,20 +356,20 @@ def install_script():
     else:
         bin_dir = Path.home() / ".local" / "bin"
         link_path = bin_dir / "n8n-gen"
-        
+
         try:
             # 1. Make script executable
             st = os.stat(script_path)
             os.chmod(script_path, st.st_mode | stat.S_IEXEC)
-            
+
             # 2. Ensure bin dir exists
             bin_dir.mkdir(parents=True, exist_ok=True)
-            
+
             # 3. Create symlink
             if link_path.exists() or link_path.is_symlink():
                 log.warning(f"Removing existing link at {link_path}")
                 link_path.unlink()
-                
+
             os.symlink(script_path, link_path)
             log.info(f"[bold green]Successfully installed n8n-gen to {link_path}[/bold green]")
         except Exception as e:
@@ -370,8 +383,9 @@ def install_script():
         if is_windows:
             log.info(f"Please add {bin_dir} to your User PATH environment variable.")
         else:
-            log.info(f"Add this to your shell profile (e.g., ~/.bashrc or ~/.zshrc):")
+            log.info("Add this to your shell profile (e.g., ~/.bashrc or ~/.zshrc):")
             log.info(f'export PATH="$PATH:{bin_dir}"')
+
 
 def main():
     parser = argparse.ArgumentParser(description="n8n Workflow Generator/Splitter & Documentation Tool")
@@ -406,6 +420,7 @@ def main():
         install_script()
     else:
         parser.print_help()
+
 
 if __name__ == "__main__":
     main()

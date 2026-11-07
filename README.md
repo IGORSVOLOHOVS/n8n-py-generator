@@ -1,52 +1,27 @@
-# n8n Python Workflow Generator
+# n8n-py-generator
 
-A powerful utility to split large n8n workflow JSON files into a manageable directory structure, rebuild them, and parse node documentation. This makes it easier to work with custom JavaScript/Python code and understand node parameters.
+A console tool for working on large n8n workflows as files instead of one JSON blob.
 
-## Features
+- **split** takes an exported n8n workflow and writes one folder per node. A Code node's `jsCode` goes to `code.js` and its `pythonCode` to `code.py`, so the code can be edited and diffed as code. The rest of each node stays in `node.json`, beside `connections.json` and `workflow_meta.json`.
+- **build** puts the folders back together into a workflow JSON that n8n imports. With `--test <config.json>` it can disable chosen nodes or replace them with a Code node that returns the items in the node's own `test.json`, so a workflow runs without its real credentials.
+- **docs** collects n8n node documentation for an AI agent: the community node packages listed on npm, saved as CSV chunks of 250 under `docs/n8n_community/`, and a sparse clone of the built-in nodes of `n8n-io/n8n` under `docs/n8n/`, with a guide in `docs/n8n_docs.md`.
+- **install** puts an `n8n-gen` command on the user's PATH: a batch shim on Windows, a symlink in `~/.local/bin` elsewhere.
 
-- **Split**: Decomposes an n8n `.json` file into separate folders for each node.
-- **Code Extraction**: Automatically extracts `jsCode` and `pythonCode` into separate `.js` or `.py` files.
-- **Build**: Reassembles the directory structure back into a valid n8n workflow JSON.
-- **Docs**: Automatically parses and downloads documentation for both built-in and community n8n nodes.
-- **Rich Output**: Beautiful console logging and progress bars.
-- **Global Install**: Can be installed as a global command `n8n-gen`.
+## Use
 
-## Installation
-
-1. Clone the repository and install dependencies:
-```bash
-pip install -r requirements.txt
+```powershell
+.\recipe.ps1 run split --input workflow.json --output src
+.\recipe.ps1 run build --input src --output workflow_generated.json
+.\recipe.ps1 run build --input src --output workflow_test.json --test test-config.json
+.\recipe.ps1 run docs
 ```
 
-2. (Optional) Install globally:
-```bash
-python3 n8n_gen.py install
-```
-After this, you can use `n8n-gen` from anywhere.
+`docs/install.md` says what to install and `docs/manual.md` describes every command. `.\recipe.ps1 test` runs the tests, mypy and ruff; the tests never touch the network.
 
-## Usage
+## Licence
 
-### Splitting a Workflow
-```bash
-n8n-gen split --input path/to/workflow.json --output ./src
-```
+MIT, see `LICENSE`.
 
-### Building a Workflow
-```bash
-n8n-gen build --input ./src --output workflow_generated.json
-```
+## Lab requirements
 
-### Parsing Documentation
-Fetches community nodes from npm and clones built-in nodes from the n8n GitHub repository:
-```bash
-n8n-gen docs
-```
-This generates a comprehensive `docs/n8n_docs.md` guide and saves node data in `docs/n8n_community/`.
-
-## Development
-
-The project uses:
-- `rich`: For beautiful console output.
-- `pandas`: For handling node data.
-- `requests`: For API interactions.
-- `python-dotenv`: For environment variable management.
+This repository complies with [revision 4.0.0](http://127.0.0.1:3000/igors-lab/software-requirements/src/tag/v4.0.0/BEST_REQUIREMENTS.md) of the lab requirements, except R-02 (#8), R-09 (#9), R-41 (#10), R-42 (#11).
